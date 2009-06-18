@@ -1,0 +1,319 @@
+#!/usr/bin/env ruby
+
+# Point it to the directory where the genbank files are and it will generate
+# Prolog representations of the files.
+
+require 'rubygems'
+require 'bio'
+
+class String
+  def to_prolog
+    "'" + self.gsub("'",'\\\\\'') + "'"
+  end
+end
+
+class Array
+  def to_prolog
+    to_prolog_list
+  end
+  
+  def to_prolog_facts
+    (self.map{ |e| e.to_prolog}).join('\n')
+  end
+  
+  def to_prolog_list
+    "[" + (self.map { |e| e.to_prolog}).join(',') + "]"
+  end
+end
+
+# Change include? method of Range class to detect overlapping ranges
+class Range
+  alias :orig_include? :include?
+  
+  def include?(o)
+    if o.class == Range
+      o.min >= self.min and o.max <= self.max
+    else
+    	orig_include?(o)
+    end
+  end
+end
+
+# Class representing an entire genome
+class Genome
+  attr_accessor :id, :data, :range
+
+  def initialize(id, data, range=nil)
+    @id, @data = id, data
+    @genes = []
+    @gene_positions = []
+    @data = @data.gsub("\n","").downcase
+    @range = 0..@data.length-1 if @range.nil?
+    @genemap = []
+    @range.each { |i| @genemap[i] = :nongene }
+  end
+  
+  def <<(gene)
+    gene.genome = self
+    @genes << gene
+    gene.position.each do |nt|
+      next unless @range.include?(nt)
+      @genemap[nt.to_i] = :gene 
+    end
+  end
+  
+  def [](index)
+    @data[index]
+  end
+  
+  def length
+    @data.length
+  end
+  
+  def inside_gene(position)
+    position = [position] if position.class = Fixnum
+    return false unless @range.include?(position)
+    position.each { |i| return false unless @genemap[i] == :gene }
+    true
+  end
+  
+  # Infers non-gene regions when all gene regions have been added
+  def nongenes
+    raise "FIXME: Implement"
+  end
+  
+  def genome_to_prolog
+    "genome('@id', #{@data[@range].gsub("\n", "").downcase.split("").to_a.to_prolog}).\n"
+  end
+  
+  def genes_to_prolog
+    prolog = []
+    @genes.each do |gene|
+      next unless @range.include?(gene.position)
+      prolog << gene.to_prolog
+    end
+    prolog
+  end
+  
+  # Creates facts:
+  # nucleotide(Pos,Nucletide,gene) and nucleotide(Pos,Nucleotide,nongene) 
+  def nucleotide_facts
+    facts = []
+    puts "Generating nucleotide facts..."
+    puts "Range: #{@range}"
+    puts @genemap.inspect
+    @range.each { |i| puts i; facts << "nt(#{i},#{@data[i].chr},#{@genemap[i].to_s})." }
+    facts
+  end
+  
+  def gene_pos_facts
+    facts = []
+    @genes.each do |gene|
+      next unless @range.include?(gene.position)
+      facts << "gene(#{gene.position.first},#{gene.position.last})."
+    end
+    facts
+  end
+end
+
+class GenomeRange
+  def initialize(start,stop,genome)
+    @start, @stop, @genome = start, stop, genome
+  end
+  
+  def data
+    if @data.nil? and not @genome.nil?
+      @genome[@start..@stop]
+    else
+      @data
+    end
+  end
+  
+  def position
+    @start..@stop
+  end
+end
+
+class Gene < GenomeRange
+  attr_accessor :genome
+  attr_writer :data
+  
+  def initialize(id, start, stop, data, genome=nil)
+    @id, @start, @stop, @data, @genome = id, start, stop, data, genome
+  end
+  
+  def to_prolog
+    "gene('#{@id}', #{@start}, #{@stop}, #{data.gsub("\n","").downcase.split("").to_a.to_prolog_list})"
+  end
+end
+
+class NonCoding < GenomeRange
+end
+
+#
+# NCBIReader: Responsible for processing data in fasta format
+#
+class NCBIReader
+  attr_accessor :genome, :range
+  
+  def initialize(dir,range=nil)
+    raise "No directory given!" if dir.nil?
+    @dir = dir
+    @range = range
+  end
+  
+  def process_data
+    files = Dir.open(@dir).to_a.map { |f| @dir + "/" + f }
+    files.each { |f| process_genome(Bio::FastaFormat.open(f)) if f =~ /.*\.fna/ }
+    @genome ||= Genome.new(nil,nil,@range) # Make a "null" genome if no genome file present
+    @range = @genome.range if @range.nil?
+    files.each { |f| process_genes(Bio::FastaFormat.open(f)) if f =~ /.*\.ffn/ }
+  end
+  
+  def process_genes(genes)
+    genes.each { |gene| process_gene(gene) }
+  end
+  
+  def process_gene(gene)
+    defline = Bio::FastaDefline.new(gene.definition)
+    if defline.list_ids[0][2] =~ /:(c?)(\d+)-(\d+)/
+      @genome << Gene.new(defline.to_s,$2,$3,($1=="c" ? "complementary" : "primary"), gene.data)
+    end
+  end
+  
+  def process_genome(genome)
+    genome.each do |g| # Even though we only expect one genome, have to do it like this...
+      defline = Bio::FastaDefline.new(g.definition) 
+      @genome = Genome.new(defline.list_ids[0][1], g.data, @range)
+    end
+  end
+  
+  def count_frequencies(lower_chunk_size_limit, upper_chunk_size_limit, sequence, collector)
+    count_table={}
+    lower_chunk_size.upto(upper_chunk_size_limit) do |i|
+      position = 0
+      dna.window_search(i,1) do |chunk|
+        position = position + 1
+        collector.add_count(position, chunk)
+      end
+    end
+  end
+  
+  def checkdata
+  end
+  
+  def write_prolog_file(filename)
+    File.open(filename, "w") { |f| f << @genome.to_prolog }
+  end
+end
+
+#
+# The Action class represents actions for script specified on the command line
+#
+class Action
+  def valid(action)
+    self.actions.include? action.downcase.gsub("-", "_")
+  end
+  
+  def actions
+    (self.methods.map { |m| $1 if m =~ /^action_(.*)/ }).reject { |a| a.nil? }
+  end
+  
+  def initialize(cmdline)
+    @args = cmdline
+    @actions=[]
+    begin
+      raise "Insufficient arguments given!" if @args.length < 3
+      @datadir = @args.shift
+      @outputfile = @args.shift
+      
+      @reader = NCBIReader.new(@datadir, parse_range)
+      @args.each do |action| 
+        if valid(action) 
+          @actions << "action_" + action
+        else
+          raise "!! Unknown action: #{action}"
+        end
+      end
+    rescue => exp
+      puts exp.to_s
+      print_help
+    end
+  end
+  
+  def parse_range
+    0.upto(@args.length-1) do |i|
+      if @args[i] == "range" and @args[i+1] =~ /(\d+)-(\d+)/
+        puts "found range!!"
+        @args.slice!(i+1)
+        @args.slice!(i)
+        puts "Using range genome range: #{$1}-#{$2}"
+        return $1..$2
+      end
+    end
+    return nil
+  end
+  
+  def print_help
+    puts
+    puts "The program to be run with following arguments:"
+    puts
+    puts "genome2prolog inputfile outputfile actions [range from-to]"
+    puts
+    puts "Valid actions is one or more of: #{actions.join(", ")}."
+    puts "The actions will be run in the order specified."
+    puts
+    exit -1
+  end
+  
+  def add_action(action)
+    raise "#{action} is not a valid action" unless self.valid(action)
+    @actions << "action_" + action.downcase.gsub("-", "_")
+  end
+  
+  def run_actions
+    @reader.process_data
+    File.open(@outputfile, "w") do |file|
+      @actions.each do |a| 
+        puts "Running #{a.gsub('_', ' ')}..."
+        file << self.send(a).join("\n")
+      end
+    end
+    puts "Wrote #{@outputfile}."
+  end
+  
+  ###  ###  ###  ###  ###  ###  ###  ###  ###  ###  ###  ###  ###  ###  ### 
+  ## Action specifications - corresponds to specific command-line options:
+  
+  def action_nucleotides
+    @reader.genome.nucleotide_facts
+  end
+  
+  def action_checkdata
+     @reader.checkdata
+  end
+  
+  def action_gene_positions
+    @reader.genome.gene_pos_facts
+  end
+  
+  def action_genome
+    @reader.genome.to_prolog
+  end
+  
+  def action_genes
+    @reader.genome.genes_to_prolog
+  end
+  
+  def action_nongenes
+  end
+end
+
+#########################################################
+puts "-"*60
+puts "genome2prolog version 0.1"
+puts "Christian Theil Have <cth@ruc.dk>"
+puts "-"*60
+#########################################################
+
+Action.new(ARGV).run_actions
