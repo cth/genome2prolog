@@ -32,7 +32,7 @@ class Range
   
   def include?(o)
     if o.class == Range
-      o.min >= self.min and o.max <= self.max
+      o.last >= self.first and o.first <= self.last
     else
     	orig_include?(o)
     end
@@ -44,20 +44,20 @@ class Genome
   attr_accessor :id, :data, :range
 
   def initialize(id, data, range=nil)
-    @id, @data = id, data
+    @id, @data, @range = id, data, range
     @genes = []
     @gene_positions = []
     @data = @data.gsub("\n","").downcase
     @range = 0..@data.length-1 if @range.nil?
     @genemap = []
-    @range.each { |i| @genemap[i] = :nongene }
+    @range.each { |i| @genemap[i.to_i] = :nongene }
   end
   
   def <<(gene)
+    return if gene.position.first.to_i < @range.first.to_i or gene.position.last.to_i > @range.last.to_i
     gene.genome = self
     @genes << gene
     gene.position.each do |nt|
-      next unless @range.include?(nt)
       @genemap[nt.to_i] = :gene 
     end
   end
@@ -99,10 +99,8 @@ class Genome
   # nucleotide(Pos,Nucletide,gene) and nucleotide(Pos,Nucleotide,nongene) 
   def nucleotide_facts
     facts = []
-    puts "Generating nucleotide facts..."
-    puts "Range: #{@range}"
-    puts @genemap.inspect
-    @range.each { |i| puts i; facts << "nt(#{i},#{@data[i].chr},#{@genemap[i].to_s})." }
+    puts "Generating nucleotide facts in range #{@range}"
+    @range.each { |i| i = i.to_i; facts << "nt(#{i},#{@data[i].chr},#{@genemap[i].to_s})." }
     facts
   end
   
@@ -110,7 +108,7 @@ class Genome
     facts = []
     @genes.each do |gene|
       next unless @range.include?(gene.position)
-      facts << "gene(#{gene.position.first},#{gene.position.last})."
+      facts << "genepos(#{gene.position.first},#{gene.position.last})."
     end
     facts
   end
@@ -143,7 +141,7 @@ class Gene < GenomeRange
   end
   
   def to_prolog
-    "gene('#{@id}', #{@start}, #{@stop}, #{data.gsub("\n","").downcase.split("").to_a.to_prolog_list})"
+    "gene('#{@id}', #{@start}, #{@stop}, #{data.gsub("\n","").downcase.split("").to_a.to_prolog_list})."
   end
 end
 
@@ -171,6 +169,7 @@ class NCBIReader
   end
   
   def process_genes(genes)
+    puts "Processing individual genes..."
     genes.each { |gene| process_gene(gene) }
   end
   
@@ -182,6 +181,7 @@ class NCBIReader
   end
   
   def process_genome(genome)
+    puts "Processing genome..."
     genome.each do |g| # Even though we only expect one genome, have to do it like this...
       defline = Bio::FastaDefline.new(g.definition) 
       @genome = Genome.new(defline.list_ids[0][1], g.data, @range)
@@ -244,7 +244,6 @@ class Action
   def parse_range
     0.upto(@args.length-1) do |i|
       if @args[i] == "range" and @args[i+1] =~ /(\d+)-(\d+)/
-        puts "found range!!"
         @args.slice!(i+1)
         @args.slice!(i)
         puts "Using range genome range: #{$1}-#{$2}"
