@@ -10,6 +10,10 @@ class String
   def to_prolog
     "'" + self.gsub("'",'\\\\\'') + "'"
   end
+  
+  def to_prolog_atom
+    self.downcase
+  end
 end
 
 class Array
@@ -32,7 +36,7 @@ class Range
   
   def include?(o)
     if o.class == Range
-      o.last >= self.first and o.first <= self.last
+      o.last.to_i >= self.first.to_i and o.first.to_i <= self.last.to_i
     else
     	orig_include?(o)
     end
@@ -91,6 +95,7 @@ class Genome
     @genes.each do |gene|
       next unless @range.include?(gene.position)
       prolog << gene.to_prolog
+      puts prolog.size
     end
     prolog
   end
@@ -136,12 +141,12 @@ class Gene < GenomeRange
   attr_accessor :genome
   attr_writer :data
   
-  def initialize(id, start, stop, data, genome=nil)
-    @id, @start, @stop, @data, @genome = id, start, stop, data, genome
+  def initialize(id, start, stop, strand, data, genome=nil)
+    @id, @start, @stop, @strand, @data, @genome = id, start, stop, strand, data, genome
   end
   
   def to_prolog
-    "gene('#{@id}', #{@start}, #{@stop}, #{data.gsub("\n","").downcase.split("").to_a.to_prolog_list})."
+    "gene('#{@id}', #{@start}, #{@stop}, #{@strand.to_prolog_atom}, #{data.gsub("\n","").downcase.split("").to_a.to_prolog_list})."
   end
 end
 
