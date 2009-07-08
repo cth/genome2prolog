@@ -159,14 +159,13 @@ end
 class NCBIReader
   attr_accessor :genome, :range
   
-  def initialize(dir,range=nil)
-    raise "No directory given!" if dir.nil?
-    @dir = dir
-    @range = range
+  def initialize(options)
+    options.each { |key,val| instance_variable_set(("@"+key.to_s).to_sym,val) }
+    raise "No directory given!" if @datadir.nil?
   end
   
   def process_data
-    files = Dir.open(@dir).to_a.map { |f| @dir + "/" + f }
+    files = Dir.open(@datadir).to_a.map { |f| @datadir + "/" + f }
     files.each { |f| process_genome(Bio::FastaFormat.open(f)) if f =~ /.*\.fna/ }
     @genome ||= Genome.new(nil,nil,@range) # Make a "null" genome if no genome file present
     @range = @genome.range if @range.nil?
@@ -181,7 +180,11 @@ class NCBIReader
   def process_gene(gene)
     defline = Bio::FastaDefline.new(gene.definition)
     if defline.list_ids[0][2] =~ /:(c?)(\d+)-(\d+)/
-      @genome << Gene.new(defline.to_s,$2,$3,($1=="c" ? "complementary" : "primary"), gene.data)
+      strand = ($1=="c") ? "complementary" : "primary"
+  #    puts @strand
+      if @strand==strand or @strand.nil?
+        @genome << Gene.new(defline.to_s,$2,$3,strand, gene.data)
+      end
     end
   end
   
@@ -226,36 +229,28 @@ class Action
   
   def initialize(cmdline)
     @args = cmdline
-    @actions=[]
+    @actions, @options = [], {}
+    
     begin
       raise "Insufficient arguments given!" if @args.length < 3
-      @datadir = @args.shift
-      @outputfile = @args.shift
+      @options[:datadir], @options[:outputfile] = @args.shift, @args.shift
       
-      @reader = NCBIReader.new(@datadir, parse_range)
-      @args.each do |action| 
-        if valid(action) 
+      @args.each do |action|
+        if action =~ /(.+)=(.+)/
+          self.send("option_" + $1, $2)
+        elsif valid(action) 
           @actions << "action_" + action
         else
-          raise "!! Unknown action: #{action}"
+          raise "!! Unknown action/option: #{action}"
         end
       end
-    rescue => exp
-      puts exp.to_s
+      
+      @reader = NCBIReader.new(@options)
+
+    rescue => e
+      puts "!" + e.to_s
       print_help
     end
-  end
-  
-  def parse_range
-    0.upto(@args.length-1) do |i|
-      if @args[i] == "range" and @args[i+1] =~ /(\d+)-(\d+)/
-        @args.slice!(i+1)
-        @args.slice!(i)
-        puts "Using range genome range: #{$1}-#{$2}"
-        return $1..$2
-      end
-    end
-    return nil
   end
   
   def print_help
@@ -277,13 +272,32 @@ class Action
   
   def run_actions
     @reader.process_data
-    File.open(@outputfile, "w") do |file|
+    File.open(@options[:outputfile], "w") do |file|
       @actions.each do |a| 
         puts "Running #{a.gsub('_', ' ')}..."
         file << self.send(a).join("\n")
       end
     end
-    puts "Wrote #{@outputfile}."
+    puts "Wrote #{@options[:outputfile]}."
+  end
+  
+  ### Option parsers
+  
+  def option_range(range)
+    if range =~ /(\d+)-(\d+)/
+      @options[:range] = ($1.to_i)..($2.to_i)
+    else
+      raise "Invalid range given: #{range}"
+      print_help
+    end
+  end
+  
+  def option_strand(strand)
+    if strand == "primary" or strand == "complementary"
+      @options[:strand] = strand
+    else
+      raise "Invalid strand given: #{strand}"
+    end
   end
   
   ###  ###  ###  ###  ###  ###  ###  ###  ###  ###  ###  ###  ###  ###  ### 
