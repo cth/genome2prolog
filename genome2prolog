@@ -254,29 +254,9 @@ class Action
   end
   
   def print_help
-    help = "
-    This program reads some genbank data files and converts the
-    data (or selected parts of it) to Prolog facts.
-
-
-    The program expects to be run with following arguments:
-
-    genome2prolog inputdir outputfile actions [options]
-
-    actions is a space separated list of actions from the set:
-    genome, genes, nucleotides, nongenes, checkdata, gene_positions.
-
-    The actions will be run in the order specified.
-
-    options is a space separate set of option keys and values, 
-    each with the syntax: key=value
-
-    Supported actions include: 
-
-    range=To-From   Where To and From denote a range of nucleotide positions (inclusive)
-
-    strand=primary|complementary    Which strand to consider (both if not specified)"
-    puts help
+    File.open("README") do |f|
+      f.each { |line| puts line } 
+    end
     exit -1
   end
   
