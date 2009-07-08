@@ -13,9 +13,10 @@ The actions will be run in the order specified.
 options:
 A space separate set of option keys and values, each with the syntax: key=value.
 Supported actions include: 
-	range=To-From				Where To and From denote
-						a range of nucleotide positions (inclusive)
-	strand=primary|complementary		Which strand to consider (both if not specified)
+	range=To-From				
+		Where To and From denote a range of nucleotide positions (inclusive)
+	strand=primary|complementary
+		Which strand to consider (both if not specified)
 
 
 
